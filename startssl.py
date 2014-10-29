@@ -27,13 +27,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 MA 02110-1301 USA
 """
 
-__version__ = "1.00"
-
 from __future__ import print_function
 try:
     from urllib.parse import urlencode  # python 3
 except ImportError:
     from urllib import urlencode  # python 2
+
+__version__ = "1.00"
 
 import argparse
 import httplib2
@@ -170,7 +170,7 @@ class API(object):
         if "headers" not in kwargs:
             kwargs['headers'] = {}
 
-        kwargs['headers']['User-Agent'] = "StartSSL_API/%s (+https://github.com/freddy36/StartSSL_API)" % VERSION
+        kwargs['headers']['User-Agent'] = "StartSSL_API/%s (+https://github.com/freddy36/StartSSL_API)" % __version__
 
         # add (overwrite) cookies
         if self.cookies:
