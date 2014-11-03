@@ -490,7 +490,7 @@ if __name__ == "__main__":
     args_src += sys.argv[1:]
     args = parser.parse_args(args=args_src)
 
-    api = API(ca_certs=args.ca_certs, user_agent=args.user_agent)
+    api = API(ca_certs=args.ca_certs.name, user_agent=args.user_agent)
     api.authenticate(args.client_crt.name, args.client_key.name)
     if args.cmd == "certs":
         certs = api.get_certificates_list()
