@@ -348,7 +348,6 @@ class API(object):
                  certificate (PEM encoded certificate or None if manual approval by StartSSL is required
         """
 
-        """"""
         assert profile in self.CERTIFICATE_PROFILES, "unknown profile"
 
         self.get_validated_resources()
