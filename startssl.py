@@ -33,7 +33,7 @@ try:
 except ImportError:
     from urllib import urlencode  # python 2
 
-__version__ = "1.00"
+__version__ = "1.02"
 
 import argparse
 import httplib2
@@ -149,13 +149,14 @@ class API(object):
     REQUEST_CERTIFICATE_CERT = re.compile('<textarea.*?>(?P<certificate>.*?)</textarea>')
     VALIDATED_RESSOURCES = re.compile('<td nowrap>(?P<resource>.+?)</td><td nowrap> <img src="/img/yes-sm.png"></td>')
 
-    def __init__(self, ca_certs=STARTCOM_CA):
+    def __init__(self, ca_certs=STARTCOM_CA, user_agent=None):
         """
         Init the StartSSL API.
 
         :param ca_certs: PEM encoded CA certificate file to authenticate the server
         """
         self.h = httplib2.Http(ca_certs=ca_certs)
+        self.user_agent = user_agent
         self.validated_emails = None
         self.validated_domains = None
         self.authenticated = False
@@ -170,7 +171,8 @@ class API(object):
         if "headers" not in kwargs:
             kwargs['headers'] = {}
 
-        kwargs['headers']['User-Agent'] = "StartSSL_API/%s (+https://github.com/freddy36/StartSSL_API)" % __version__
+        if self.user_agent:
+            kwargs['headers']['User-Agent'] = self.user_agent
 
         # add (overwrite) cookies
         if self.cookies:
@@ -459,6 +461,7 @@ if __name__ == "__main__":
     parser.add_argument('--client_crt', help='Client certificate file (PEM)', required=True,
                         type=argparse.FileType('r'))
     parser.add_argument('--client_key', help='Client key file (PEM)', required=True, type=argparse.FileType('r'))
+    parser.add_argument('--user_agent', help='HTTP User Agent to use', default="StartSSL_API/%s (+https://github.com/freddy36/StartSSL_API)" % __version__, type=str)
     parser.add_argument('--version', action='version', version='%(prog)s ' + __version__)
 
     subparsers = parser.add_subparsers(title='subcommands',
@@ -487,7 +490,7 @@ if __name__ == "__main__":
     args_src += sys.argv[1:]
     args = parser.parse_args(args=args_src)
 
-    api = API(ca_certs=args.ca_certs)
+    api = API(ca_certs=args.ca_certs, user_agent=args.user_agent)
     api.authenticate(args.client_crt.name, args.client_key.name)
     if args.cmd == "certs":
         certs = api.get_certificates_list()
