@@ -452,7 +452,8 @@ class API(object):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog="StartSSL_API", description="A CLI for some StartSSL functions.")
+    config_files = ['/etc/startssl.conf', 'startssl.conf']
+    parser = argparse.ArgumentParser(prog="StartSSL_API", description="A CLI for some StartSSL functions.", fromfile_prefix_chars='@', epilog="Arguments are also read from the following config files: %s (use @/path/to/file to specify more files)" % ", ".join(config_files))
     parser.add_argument('--ca_certs', help='CA certificate file (PEM) to authenticate the server (default: %(default)s',
                         required=False, default=API.STARTCOM_CA, type=argparse.FileType('r'))
     parser.add_argument('--client_crt', help='Client certificate file (PEM)', required=True,
@@ -479,7 +480,12 @@ if __name__ == "__main__":
                               help="default: %(default)s, use - for stdout")
     parser_certs.add_argument('certificates', nargs=argparse.REMAINDER,
                               help="Retrieve specific certificates by name or id", type=str)
-    args = parser.parse_args()
+    args_src = []
+    for config_file in config_files:
+        if os.path.exists(config_file):
+            args_src.append("@"+config_file)
+    args_src += sys.argv[1:]
+    args = parser.parse_args(args=args_src)
 
     api = API()
     api.authenticate(args.client_crt.name, args.client_key.name)

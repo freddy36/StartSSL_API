@@ -1,0 +1,3 @@
+--client_crt=startssl-client.crt
+--client_key=startssl-client.key
+--ca_certs=/etc/ssl/certs/StartCom_Certification_Authority.pem
