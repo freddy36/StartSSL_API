@@ -137,7 +137,7 @@ class API(object):
     CERTIFICATE_PROFILES = {'smime': "S/MIME", 'server': "Server", 'xmpp': "XMPP", 'code': "Object"}
 
     RETRIEVE_CERTIFICATE_LIST = re.compile(
-        '<option value=\\\\"(?P<id>\d+)\\\\" style=\\\\"background-color: #(?P<color>[0-9A-F]{6});\\\\">(?P<name>[^-]+?) \((?P<profile_description>[\w/]+?) - (?P<class>[\w\d ]+?) - (?P<expires_year>\d{4})-(?P<expires_month>\d{2})-(?P<expires_day>\d{2})\)</option>',
+        '<option value=\\\\"(?P<id>\d+)\\\\" style=\\\\"background-color: #(?P<color>[0-9A-F]{6});\\\\">(?P<name>.+?) \((?P<profile_description>[\w/]+?) - (?P<class>[\w\d ]+?) - (?P<expires_year>\d{4})-(?P<expires_month>\d{2})-(?P<expires_day>\d{2})\)</option>',
         re.UNICODE)
     RETRIEVE_CERTIFICATE_CERT = re.compile(
         '<textarea name=\\\\"cert\\\\" rows=\\\\"8\\\\" cols=\\\\"70\\\\" style=\\\\"height: 120px\\\\">(?P<certificate>.*?)</textarea>')
