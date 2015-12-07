@@ -33,7 +33,7 @@ try:
 except ImportError:
     from urllib import urlencode  # python 2
 
-__version__ = "1.03"
+__version__ = "1.04"
 
 import argparse
 import httplib2
