@@ -330,6 +330,7 @@ class API(object):
             # replace newline escape sequences with actual newlines
             cert = cert.replace("\\n", "\n")
             cert = cert.strip()
+            cert += "\n"
             assert "-----BEGIN CERTIFICATE-----" in cert, "no BEGIN CERTIFICATE"
             assert "-----END CERTIFICATE-----" in cert, "no END CERTIFICATE"
 
