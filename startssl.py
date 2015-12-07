@@ -398,12 +398,15 @@ class API(object):
                 resp, content = self.__request(self.STARTSSL_BASEURI, method="POST", body=body)
                 assert resp.status == 200, "fourth_step_certs bad status"
 
-            # add subdomains (using 4. rsarg of fourth_step_certs)
-            for domain in subjects_subdomain:
-                body = [('app', 12), ('rs', 'fourth_step_certs'), ('rsargs[]', profile), ('rsargs[]', certificate_id),
-                        ('rsargs[]', ''), ('rsargs[]', domain)]
-                resp, content = self.__request(self.STARTSSL_BASEURI, method="POST", body=body)
-                assert resp.status == 200, "fourth_step_certs bad status"
+                # add subdomains (using 4. rsarg of fourth_step_certs)
+                # we've to do this after adding the primary domain, adding all primary domains first and then the subdomains will result in a wrong CN
+                for subdomain in subjects_subdomain:
+                    if not subdomain.endswith("."+domain): # skip subdomains belonging to another primary domains
+                        continue
+                    body = [('app', 12), ('rs', 'fourth_step_certs'), ('rsargs[]', profile), ('rsargs[]', certificate_id),
+                            ('rsargs[]', ''), ('rsargs[]', subdomain)]
+                    resp, content = self.__request(self.STARTSSL_BASEURI, method="POST", body=body)
+                    assert resp.status == 200, "fourth_step_certs bad status"
 
             # get ready page (list of all submitted domains)
             body = [('app', 12), ('rs', 'fifth_step_certs'), ('rsargs[]', profile), ('rsargs[]', certificate_id),
