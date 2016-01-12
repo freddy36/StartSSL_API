@@ -33,7 +33,7 @@ try:
 except ImportError:
     from urllib import urlencode  # python 2
 
-__version__ = "1.04"
+__version__ = "1.05"
 
 import argparse
 import httplib2
@@ -48,6 +48,9 @@ import pyasn1
 import pyasn1.codec.der.decoder
 import pyasn1_modules.rfc2314
 import pyasn1_modules.rfc2459
+
+import zipfile
+import io
 
 
 class CSR:
@@ -129,18 +132,13 @@ class API(object):
     Provides a python API for some StartCOM StartSSL functions
     """
     STARTCOM_CA = "/etc/ssl/certs/StartCom_Certification_Authority.pem"
-    STARTSSL_BASEURI = "https://www.startssl.com"
+    STARTSSL_BASEURI = "https://startssl.com"
     STARTSSL_AUTHURI = "https://auth.startssl.com"
 
-    # key: value of select field (new certificate request)
-    # value: descriptions in the certificate list
-    CERTIFICATE_PROFILES = {'smime': "S/MIME", 'server': "Server", 'xmpp': "XMPP", 'code': "Object"}
-
     RETRIEVE_CERTIFICATE_LIST = re.compile(
-        '<option value=\\\\"(?P<id>\d+)\\\\" style=\\\\"background-color: #(?P<color>[0-9A-F]{6});\\\\">(?P<name>.+?) \((?P<profile_description>[\w/]+?) - (?P<class>[\w\d ]+?) - (?P<expires_year>\d{4})-(?P<expires_month>\d{2})-(?P<expires_day>\d{2})\)</option>',
+        '<tr style="text-align:center;">\s+<td style="vertical-align:middle;">(?P<order_number>\d+)</td>\s+<td align="left" style="vertical-align:middle;" title="(?P<name>.+?)">.+?</td>\s+<td align="left" style="vertical-align:middle;">(?P<product>[\w ]+?)</td>\s+<td style="vertical-align:middle;">\s*(?:<span>)?(?P<issuance_date_year>\d{4})?-?(?P<issuance_date_month>\d{2})?-?(?P<issuance_date_day>\d{2})?(?:</span><br /><span>)?(?P<expiry_date_year>\d{4})?-?(?P<expiry_date_month>\d{2})?-?(?P<expiry_date_day>\d{2})?(?:</span>)?\s*</td>\s+<td style="vertical-align:middle;">\s+(?P<status>.+?)<!--.*?-->\s+</td>\s+<td align="center" style="vertical-align:middle;">\s*(?s)(?P<actions_code>.*?)\s*</td>\s*</tr>',
         re.UNICODE)
-    RETRIEVE_CERTIFICATE_CERT = re.compile(
-        '<textarea name=\\\\"cert\\\\" rows=\\\\"8\\\\" cols=\\\\"70\\\\" style=\\\\"height: 120px\\\\">(?P<certificate>.*?)</textarea>')
+    RETRIEVE_CERTIFICATE_LIST_ACCTION_ID = re.compile('orderId=(?P<orderId>\w+)')
     REQUEST_CERTIFICATE_CSR_ID = re.compile(
         'x_third_step_certs\(\\\\\'(?P<type>\w+?)\\\\\',\\\\\'(?P<csr_id>\d+?)\\\\\',\\\\\'(?P<unknown>.*?)\\\\\',showCertsWizard\);')
     REQUEST_CERTIFICATE_READY_CN = re.compile(
@@ -156,6 +154,7 @@ class API(object):
         :param ca_certs: PEM encoded CA certificate file to authenticate the server
         """
         self.h = httplib2.Http(ca_certs=ca_certs)
+        self.h.follow_redirects = False
         self.user_agent = user_agent
         self.validated_emails = None
         self.validated_domains = None
@@ -202,10 +201,11 @@ class API(object):
         :return: True on success
         """
         self.h.add_certificate(key, cert, '')
-        resp, content = self.__request(self.STARTSSL_AUTHURI, method="POST", body="app=11")
-        assert resp.status == 200
-        assert "set-cookie" in resp
-        assert resp["set-cookie"].startswith("STARTSSLID=")
+        resp, content = self.__request(self.STARTSSL_AUTHURI, method="GET")
+        assert resp.status == 302, resp
+        assert resp["location"].startswith("https://Startssl.com/ControlPanel"), resp
+        assert "set-cookie" in resp, resp
+        assert resp["set-cookie"].startswith("MyStartSSLCookie="), resp["set-cookie"]
         self.cookies = resp["set-cookie"]
         self.authenticated = True
 
@@ -254,87 +254,138 @@ class API(object):
         Returns the available signed certificates.
 
         Each certificate entry (dict) has the following keys:
-        'id', 'name', 'class', 'profile', 'retrieved' (bool),
-        'expires' (datetime), 'expires_day', 'expires_year', 'expires_month'
+        'id', 'order_number', 'name', 'class', 'profile', 'product', 'status',
+        'issuance_date' (datetime), 'issuance_date_day', 'issuance_date_year', 'issuance_date_month'
+        'expiry_date' (datetime), 'expiry_date_day', 'expiry_date_year', 'expiry_date_month'
 
         :return: a list of certificate dicts
         """
-        body = [('app', 12), ('rs', "set_toolbox_item"), ('rsargs[]', "crt")]
-        resp, content = self.__request(self.STARTSSL_BASEURI, method="POST", body=body)
-        assert resp.status == 200, "getCertificatesList bad status"
-        assert "<b>Retrieve Certificate</b>" in content, "getCertificatesList unexpected content %s" % content
+        hasNextPage = True
+        pageindex = 0
+        while hasNextPage:
+            resp, content = self.__request(self.STARTSSL_BASEURI+"/CertList?pageindex="+str(pageindex), method="GET")
+            assert resp.status == 200, resp
+            assert "Certificate List<!--Cert List-->" in content, content
 
-        items = self.RETRIEVE_CERTIFICATE_LIST.finditer(content)
-        certs = []
-        for item in items:
-            cert = item.groupdict()
+            items = self.RETRIEVE_CERTIFICATE_LIST.finditer(content)
+            for item in items:
+                cert = item.groupdict()
 
-            # convert expire date
-            cert['expires'] = datetime.date(int(cert['expires_year']), int(cert['expires_month']),
-                                            int(cert['expires_day']))
+                # convert Issuance Date
+                if cert['issuance_date_year'] != None:
+                    cert['issuance_date'] = datetime.date(int(cert['issuance_date_year']), int(cert['issuance_date_month']), int(cert['issuance_date_day']))
+                    cert['expiry_date'] = datetime.date(int(cert['expiry_date_year']), int(cert['expiry_date_month']), int(cert['expiry_date_day']))
+                else:
+                    cert['issuance_date'] = None
+                    cert['expiry_date'] = None
 
-            # convert id to integer
-            cert['id'] = int(cert['id'])
+                # convert to integer
+                cert['order_number'] = int(cert['order_number'])
 
-            # convert profile description to profile identifier
-            cert['profile'] = "unknown"
-            for k, v in iter(self.CERTIFICATE_PROFILES.items()):
-                if v == cert['profile_description']:
-                    cert['profile'] = k
-                    break
-            del cert['profile_description']
+                # convert profile description to profile identifier
 
-            # set retrieved state depending on the background color
-            if cert['color'] == "FFFFFF":
-                cert['retrieved'] = True
-            else:  # if color = rgb(201, 255, 196)
-                cert['retrieved'] = False
-            del cert['color']
+                if cert['product'].endswith("SSL"):
+                    cert['profile'] = "server"
+                elif cert['product'].endswith("Client"):
+                    cert['profile'] = "client"
+                elif cert['product'].endswith("Code Signing"):
+                    cert['profile'] = "object"
+                else:
+                    cert['profile'] = None
 
-            certs.append(cert)
+                if cert['product'].startswith("Class"):
+                    cert['class'] = int(cert['product'][6])
+                else:
+                    cert['class'] = None
 
-        return certs
+                item = self.RETRIEVE_CERTIFICATE_LIST_ACCTION_ID.search(cert['actions_code'])
+                if item != None:
+                    cert['id'] = item.group('orderId')
+                else:
+                    cert['id'] = None
+                del cert['actions_code']
 
-    def get_certificate(self, certificate_id):
+                """
+                # set retrieved state depending on the background color
+                if cert['color'] == "FFFFFF":
+                    cert['retrieved'] = True
+                else:  # if color = rgb(201, 255, 196)
+                    cert['retrieved'] = False
+                del cert['color']
+                """
+                yield cert
+
+            hasNextPage = ">Next page</a>" in content
+            pageindex += 1
+
+
+    def get_certificate_zip(self, certificate_id):
         """
-        Returns a certificate.
+        Returns a the certificate zip bundle.
 
         Use get_certificates_list() to find the id or use the certificate_id returned by submit_certificate_request()
 
-        TODO: can't retrieve S/MIME certificates yet
-
         :param certificate_id: StartSSL internal id of the certificate
-        :return: PEM encoded certificate or None (invalid id)
+        :return: ZIP file as bytes
         """
 
-        body = [('app', 12), ('rs', "set_toolbox_item"), ('rsargs[]', "crt"), ('rsargs[]', certificate_id)]
-        resp, content = self.__request(self.STARTSSL_BASEURI, method="POST", body=body)
-        assert resp.status == 200, "getCertificate bad status"
-        assert "<b>Retrieve Certificate</b>" in content, "getCertificate unexpected content %s" % content
+        resp, content = self.__request(self.STARTSSL_BASEURI+"/CertList/DownLoadCert?orderId="+str(certificate_id), method="GET")
+        assert resp.status == 200, resp
+        assert resp['content-type'] == 'application/octet-stream', resp
+        assert resp['content-disposition'].startswith('attachment; filename='), resp
 
-        if "/getcrt.ssl?certID=" in content:
-            # it's a S/MIME client certificate
-            # resp, content = self.__request(self.STARTSSL_BASEURI+"/getcrt.ssl?certID=%i" % (certificate_id), method = "GET")
-            # print resp, content
-            raise NotImplementedError('S/MIME certificates are not supported.')
+        attachment_filename = resp['content-disposition'][len('attachment; filename='):]
+        return attachment_filename, content
+
+
+    def get_certificate(self, certificate_id):
+        """
+        Returns a certificate, it's basename (Common Name) and the corresponding intermediate certificate.
+
+        Use get_certificates_list() to find the id or use the certificate_id returned by submit_certificate_request()
+
+        :param certificate_id: StartSSL internal id of the certificate
+        :return: basename (common name), PEM encoded certificate
+        """
+
+        attachment_filename, zip_file = self.get_certificate_zip(certificate_id)
+        assert attachment_filename[-4:] == ".zip", attachment_filename
+        basename = attachment_filename[0:-4]
+        zf_main = zipfile.ZipFile(io.BytesIO(zip_file), "r")
+        assert zf_main.testzip() == None, "invalid zip file"
+
+        if "OtherServer.zip" in zf_main.namelist(): # Server
+            zf_server = zipfile.ZipFile(io.BytesIO(zf_main.read("OtherServer.zip")), "r")
+            intermediate_filename = "1_Intermediate.crt"
+            server_filename = "2_"+basename+".crt"
+
+            assert len(zf_server.namelist()) == 3, zf_server.namelist()
+            assert intermediate_filename in zf_server.namelist(), zf_server.namelist()
+            assert server_filename in zf_server.namelist(), zf_server.namelist()
+
+            intermediate_cert = zf_server.read(intermediate_filename).decode("ascii")
+            cert = zf_server.read(server_filename).decode("ascii")
+        elif len(zf_main.namelist()) == 2: # Client + Object
+            intermediate_filename = "1_Intermediate.crt"
+            cert_filename = zf_main.namelist()[1]
+            assert intermediate_filename != cert_filename, zf_main.namelist()
+
+            assert intermediate_filename in zf_main.namelist(), zf_main.namelist()
+            assert cert_filename in zf_main.namelist(), zf_main.namelist()
+
+            intermediate_cert = zf_main.read(intermediate_filename).decode("ascii")
+            cert = zf_main.read(cert_filename).decode("ascii")
         else:
-            # extract PEM encoded certificate
-            item = self.RETRIEVE_CERTIFICATE_CERT.search(content)
-            assert item, "no certificate found"
-            cert = item.group('certificate')
+            raise ValueError("unexpected zip content: "+str(zf_main.namelist()))
 
-            if len(cert) == 0:
-                # invalid ID
-                return None
+        assert "-----BEGIN CERTIFICATE-----" in intermediate_cert, "no BEGIN CERTIFICATE"
+        assert "-----END CERTIFICATE-----" in intermediate_cert, "no END CERTIFICATE"
 
-            # replace newline escape sequences with actual newlines
-            cert = cert.replace("\\n", "\n")
-            cert = cert.strip()
-            cert += "\n"
-            assert "-----BEGIN CERTIFICATE-----" in cert, "no BEGIN CERTIFICATE"
-            assert "-----END CERTIFICATE-----" in cert, "no END CERTIFICATE"
+        assert "-----BEGIN CERTIFICATE-----" in cert, "no BEGIN CERTIFICATE"
+        assert "-----END CERTIFICATE-----" in cert, "no END CERTIFICATE"
 
-            return cert
+        return basename, cert, intermediate_cert
+
 
     def submit_certificate_request(self, profile, csr):
         """
@@ -478,9 +529,9 @@ if __name__ == "__main__":
                                          description='Retrieves certificates from StartSSL. By default all available certificates are listed.')
     parser_certs.set_defaults(cmd="certs")
     parser_certs.add_argument('--store', action="append", choices=['all', 'new', 'missing'], default=[],
-                              help="Retrieve all (replace any existing), new (never downloaded/green background), missing (target file missing) certificates")
+                              help="Retrieve all (replace any existing), new (never downloaded/feature currently broken), missing (target file missing) certificates")
     parser_certs.add_argument('--list_format',
-                              default="{name}, {profile}, {class}, expires: {expires}, retrieved: {retrieved}, id: {id}",
+                              default="Order Number: {order_number}, {name}, Profile: {profile}, Class: {class}, Product: {product}, Status: {status}, Issuance date: {issuance_date}, Expiry date: {expiry_date}, id: {id}",
                               type=str, help="default: %(default)s")
     parser_certs.add_argument('--filename_format', default="{name}.crt", type=str,
                               help="default: %(default)s, use - for stdout")
@@ -502,15 +553,13 @@ if __name__ == "__main__":
                 print(args.list_format.format(**cert))
         else:
             for cert in certs:
-                if not cert['profile'] in ['server', 'xmpp']:  # skip unsupported profiles
-                    continue
                 filename = args.filename_format.format(**cert)
                 if (("all" in args.store) or
                         ("new" in args.store and not cert['retrieved']) or
                         ("missing" in args.store and not os.path.exists(filename)) or
                         (cert['name'] in args.certificates) or
-                        (str(cert['id']) in args.certificates)):
-                    cert = api.get_certificate(cert['id'])
+                        (str(cert['order_number']) in args.certificates)):
+                    basename, cert, intermediate_cert = api.get_certificate(cert['id'])
                     if filename == "-":
                         print(cert)
                     else:
