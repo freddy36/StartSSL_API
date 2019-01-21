@@ -1,3 +1,5 @@
+# DEPRECATED - StartSSL is no longer in operation
+
 StartSSL_API
 ============
 
